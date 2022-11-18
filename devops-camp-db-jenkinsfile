@@ -9,19 +9,36 @@ pipeline {
         DB_IMAGE_NAME = 'db'
     }
     stages {
-        stage('Application repository') {stage('DB changes: true') {
+        stage('Application repository') {
+            steps {
+                echo "Cloning application repository"
+                sh 'git clone https://github.com/mason-mowbray/afs-labs-student.git'
+                dir('afs-labs-student') {
+                    script {
+                        env.COMMIT_HASH = sh(script: 'git log --format=format:%h -1 --follow database/database.sql', returnStdout: true).trim()
+                    }
+                }
+                withCredentials([usernamePassword(credentialsId: 'mmowbray-harbor-auth', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    script {
+                        env.BUILD_DB = sh(script: 'python check_harbor_db.py -h $COMMIT_HASH -i $DB_IMAGE_NAME -r $HARBOR_REGISTRY -p $HARBOR_PROJECT -c ${USERNAME}:${PASSWORD}', returnStdout: true).trim()
+                    }
+                }
+            }
+        }
+        stage('Security scanning') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'mmowbray-harbor-auth', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    echo "Scanning $DB_IMAGE_NAME image"
+                    sh 'python harbor_scanner.py -i $DB_IMAGE_NAME -r $HARBOR_REGISTRY -p $HARBOR_PROJECT -c ${USERNAME}:${PASSWORD}'
+                }
+            }
+        }
+        stage('DB changes: true') {
            when {
               environment name: 'BUILD_DB', value: 'true'
            }
            stages {
-              stage('Database docker build') {stage('Security scanning') {
-            steps {
-                  withCredentials([usernamePassword(credentialsId: 'mmowbray-harbor-auth', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                      echo "Scanning $DB_IMAGE_NAME image"
-                      sh 'python harbor_scanner.py -i $DB_IMAGE_NAME -r $HARBOR_REGISTRY -p $HARBOR_PROJECT -c ${USERNAME}:${PASSWORD}'
-                  }
-            }
-        }
+              stage('Database docker build') {
                   steps {
                       echo "Building database image"
                       withCredentials([usernameColonPassword(credentialsId: 'mmowbray-harbor-auth', variable: 'HARBOR-AUTH')]) {
@@ -35,7 +52,7 @@ pipeline {
                       }
                   }
                   post {
-                    always {
+                      always {
                           echo "Clean local $DB_IMAGE_NAME image"
                           script {
                               try {
@@ -55,20 +72,6 @@ pipeline {
                   }
               }
            }
-        }
-            steps {
-                echo "Cloning application repository"
-                sh 'git clone https://github.com/mason-mowbray/afs-labs-student.git'
-                dir('afs-labs-student') {withCredentials([usernamePassword(credentialsId: 'mmowbray-harbor-auth', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                    script {
-                        env.BUILD_DB = sh(script: 'python check_harbor_db.py -h $COMMIT_HASH -i $DB_IMAGE_NAME -r $HARBOR_REGISTRY -p $HARBOR_PROJECT -c ${USERNAME}:${PASSWORD}', returnStdout: true).trim()
-                    }
-                }
-                    script {
-                        env.COMMIT_HASH = sh(script: 'git log --format=format:%h -1 --follow database/database.sql', returnStdout: true).trim()
-                    }
-                }
-            }
         }
     }
     post {
